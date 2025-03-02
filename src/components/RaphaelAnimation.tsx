@@ -157,43 +157,54 @@ const RaphaelAnimation = ({
           }
 
           // Tiempo transcurrido desde el inicio del ataque
-          const attackTime = attackStartTime.current
-            ? time - attackStartTime.current
-            : 0;
-          const attackDuration = 1.0; // Duración más corta para un ataque más rápido
+          if (attackStartTime.current === null) {
+            attackStartTime.current = time;
+          }
+
+          const attackTime = time - attackStartTime.current;
+          const attackDuration = 1.2; // Duración total del ataque
           const attackProgress = Math.min(attackTime / attackDuration, 1);
 
-          // Movimiento de ataque con la espada vertical
+          // Animación de ataque en tres fases
           if (attackProgress < 0.3) {
-            // Fase 1: Levantar la espada
-            sword.rotation.x = -(attackProgress / 0.3) * Math.PI * 0.75;
-            sword.rotation.z = Math.PI / 4;
-            group.position.y = initialPosition[1] + 0.2; // Levantarse un poco
+            // Fase 1: Preparación (levantar espada)
+            const prepProgress = attackProgress / 0.3;
+            sword.rotation.x = -prepProgress * Math.PI * 0.75;
+            sword.rotation.z = Math.PI / 4 + prepProgress * Math.PI * 0.25;
+            group.position.y = initialPosition[1] + prepProgress * 0.2;
           } else if (attackProgress < 0.6) {
-            // Fase 2: Golpe vertical rápido
+            // Fase 2: Ataque (golpe rápido)
             const swingProgress = (attackProgress - 0.3) / 0.3;
-            sword.rotation.x = -Math.PI * 0.75 + swingProgress * Math.PI;
-            sword.rotation.z = Math.PI / 4;
-            group.position.y = initialPosition[1] + 0.2 - swingProgress * 0.1; // Bajar durante el golpe
-            // Avanzar ligeramente durante el golpe
+            const swingEased = 1 - Math.pow(1 - swingProgress, 3); // Easing para un golpe más rápido
+            sword.rotation.x = -Math.PI * 0.75 + swingEased * Math.PI * 1.5;
+            sword.rotation.z = Math.PI / 2 - swingEased * Math.PI * 0.25;
+
+            // Movimiento del cuerpo durante el golpe
+            group.position.y = initialPosition[1] + 0.2 - swingEased * 0.1;
+            group.rotation.z = swingEased * -0.2; // Inclinación del cuerpo
+
+            // Avance durante el golpe
             if (lastKnownTarget.current) {
               const direction = new THREE.Vector3(...lastKnownTarget.current)
                 .sub(new THREE.Vector3(group.position.x, 0, group.position.z))
                 .normalize();
-              group.position.x += direction.x * 0.05;
-              group.position.z += direction.z * 0.05;
+              group.position.x += direction.x * 0.1 * swingEased;
+              group.position.z += direction.z * 0.1 * swingEased;
             }
           } else {
             // Fase 3: Recuperación
             const recoveryProgress = (attackProgress - 0.6) / 0.4;
-            sword.rotation.x =
-              Math.PI * 0.25 - recoveryProgress * Math.PI * 0.25;
+            const recoveryEased = 1 - Math.pow(1 - recoveryProgress, 2);
+
+            sword.rotation.x = Math.PI * 0.75 - recoveryEased * Math.PI * 0.5;
             sword.rotation.z = Math.PI / 4;
-            group.position.y =
-              initialPosition[1] + 0.1 * (1 - recoveryProgress);
+
+            // Volver a la posición normal
+            group.position.y = initialPosition[1] + 0.1 * (1 - recoveryEased);
+            group.rotation.z = -0.2 * (1 - recoveryEased);
           }
 
-          // Avanzar a la siguiente etapa después del tiempo de ataque
+          // Avanzar a la siguiente etapa cuando termine la animación
           if (attackProgress >= 1) {
             advanceToNextStage();
             afterAttackStartTime.current = time;

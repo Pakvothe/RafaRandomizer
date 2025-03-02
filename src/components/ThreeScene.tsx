@@ -77,9 +77,10 @@ const ParticipantsAnimation = ({
   isMobile,
   setParticipantPositions,
 }: ParticipantsAnimationProps) => {
-  const { stage, isAnimating } = useAnimationStore();
+  const { stage, isAnimating, showBlood } = useAnimationStore();
   const updateInterval = useRef(0);
   const batchSize = useRef(isMobile.current ? 10 : 20);
+  const centerPosition = new THREE.Vector3(0, 0, 0);
 
   // Actualizar movimiento de los participantes
   useFrame(() => {
@@ -99,49 +100,124 @@ const ParticipantsAnimation = ({
         const ref = participantRefs.current[participant];
         if (!ref) return;
 
-        // Si no tiene un objetivo o está cerca del objetivo, asignar uno nuevo
-        if (
-          !participantTargets.current[participant] ||
-          new THREE.Vector3(...participantPositions[participant]).distanceTo(
-            new THREE.Vector3(
-              ...(participantTargets.current[participant] || [0, 0, 0])
-            )
-          ) < 0.5
-        ) {
-          participantTargets.current[participant] = getRandomPosition(
-            isMobile.current
+        // Si hay un ganador y no ha sido eliminado, huir de él
+        if (winner && participantPositions[winner] && !showBlood) {
+          const winnerPos = new THREE.Vector3(...participantPositions[winner]);
+          const current = new THREE.Vector3(
+            ...participantPositions[participant]
           );
+
+          // Vector desde el ganador al participante (dirección de huida)
+          const fleeDirection = new THREE.Vector3()
+            .subVectors(current, winnerPos)
+            .normalize();
+
+          // Calcular nueva posición alejándose del ganador
+          const speed = participantSpeeds.current[participant] || 0.05;
+          const newPos: [number, number, number] = [
+            current.x + fleeDirection.x * speed * 1.5,
+            0,
+            current.z + fleeDirection.z * speed * 1.5,
+          ];
+
+          // Limitar el área de movimiento
+          const maxDistance = isMobile.current ? 8 : 12;
+          if (Math.abs(newPos[0]) > maxDistance) {
+            newPos[0] = Math.sign(newPos[0]) * maxDistance;
+          }
+          if (Math.abs(newPos[2]) > maxDistance) {
+            newPos[2] = Math.sign(newPos[2]) * maxDistance;
+          }
+
+          // Actualizar rotación para mirar hacia donde huye
+          const angle = Math.atan2(fleeDirection.x, fleeDirection.z);
+          ref.rotation.y = angle + Math.PI;
+
+          // Actualizar posición en el estado
+          setParticipantPositions((prev) => ({
+            ...prev,
+            [participant]: newPos,
+          }));
+
+          // Aplicar la posición al objeto
+          ref.position.set(...newPos);
+        } else {
+          // Si no hay ganador o el ganador fue eliminado, volver al centro
+          const current = new THREE.Vector3(
+            ...participantPositions[participant]
+          );
+          const distanceToCenter = current.distanceTo(centerPosition);
+
+          if (distanceToCenter > 3) {
+            // Si está lejos del centro
+            const directionToCenter = new THREE.Vector3()
+              .subVectors(centerPosition, current)
+              .normalize();
+
+            const speed = participantSpeeds.current[participant] || 0.05;
+            const newPos: [number, number, number] = [
+              current.x + directionToCenter.x * speed,
+              0,
+              current.z + directionToCenter.z * speed,
+            ];
+
+            // Actualizar rotación para mirar hacia el centro
+            const angle = Math.atan2(directionToCenter.x, directionToCenter.z);
+            ref.rotation.y = angle;
+
+            // Actualizar posición en el estado
+            setParticipantPositions((prev) => ({
+              ...prev,
+              [participant]: newPos,
+            }));
+
+            // Aplicar la posición al objeto
+            ref.position.set(...newPos);
+          } else {
+            // Si está cerca del centro, moverse aleatoriamente
+            if (
+              !participantTargets.current[participant] ||
+              current.distanceTo(
+                new THREE.Vector3(
+                  ...(participantTargets.current[participant] || [0, 0, 0])
+                )
+              ) < 0.5
+            ) {
+              participantTargets.current[participant] = getRandomPosition(
+                isMobile.current
+              );
+            }
+
+            // Mover hacia el objetivo aleatorio
+            const target = new THREE.Vector3(
+              ...(participantTargets.current[participant] || [0, 0, 0])
+            );
+            const direction = new THREE.Vector3()
+              .subVectors(target, current)
+              .normalize();
+
+            // Actualizar posición
+            const speed = participantSpeeds.current[participant] || 0.05;
+            const newPos: [number, number, number] = [
+              current.x + direction.x * speed,
+              0,
+              current.z + direction.z * speed,
+            ];
+
+            // Actualizar rotación para mirar hacia donde se mueve
+            const angle = Math.atan2(direction.x, direction.z);
+            ref.rotation.y = angle;
+
+            // Actualizar posición en el estado
+            setParticipantPositions((prev) => ({
+              ...prev,
+              [participant]: newPos,
+            }));
+
+            // Aplicar la posición al objeto
+            ref.position.set(...newPos);
+          }
         }
-
-        // Mover hacia el objetivo
-        const target = new THREE.Vector3(
-          ...(participantTargets.current[participant] || [0, 0, 0])
-        );
-        const current = new THREE.Vector3(...participantPositions[participant]);
-        const direction = new THREE.Vector3()
-          .subVectors(target, current)
-          .normalize();
-
-        // Actualizar posición
-        const speed = participantSpeeds.current[participant] || 0.05;
-        const newPos: [number, number, number] = [
-          current.x + direction.x * speed,
-          0,
-          current.z + direction.z * speed,
-        ];
-
-        // Actualizar rotación para mirar hacia donde se mueve
-        const angle = Math.atan2(direction.x, direction.z);
-        ref.rotation.y = angle;
-
-        // Actualizar posición en el estado
-        setParticipantPositions((prev) => ({
-          ...prev,
-          [participant]: newPos,
-        }));
-
-        // Aplicar la posición al objeto
-        ref.position.set(...newPos);
       }
     });
 
@@ -191,16 +267,15 @@ const CelebrationAnimation = ({
           participantCelebrationTimes.current[participant] += deltaTime;
           const particleTime = participantCelebrationTimes.current[participant];
 
-          // Saltar de alegría igual que Rafa
-          ref.position.y = Math.abs(Math.sin(particleTime * 5)) * 0.7;
+          // Animar todo el grupo como una unidad
+          ref.position.y = Math.abs(Math.sin(particleTime * 5)) * 0.5;
+          ref.rotation.y += deltaTime * 2;
+          ref.rotation.z = Math.sin(particleTime * 5) * 0.1;
 
-          // Girar sobre sí mismo igual que Rafa
-          ref.rotation.y += 0.1;
-
-          // Animar brazos si existen (igual que Rafa)
+          // Animar brazos si existen (como parte del grupo)
           if (ref.children.length >= 3) {
-            const arms = ref.children[2] as THREE.Mesh;
-            if (arms) {
+            const arms = ref.children[2] as THREE.Group;
+            if (arms && arms.isGroup) {
               arms.rotation.x = Math.sin(particleTime * 8) * 0.3;
             }
           }
