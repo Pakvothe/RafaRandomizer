@@ -1,4 +1,4 @@
-import { useState, useEffect, useRef } from "react";
+import { useState, useEffect, useRef, useMemo } from "react";
 import { Canvas, useFrame, useThree } from "@react-three/fiber";
 import {
   OrbitControls,
@@ -78,13 +78,23 @@ const ParticipantsAnimation = ({
   setParticipantPositions,
 }: ParticipantsAnimationProps) => {
   const { stage, isAnimating } = useAnimationStore();
+  const updateInterval = useRef(0);
+  const batchSize = useRef(isMobile.current ? 10 : 20);
 
   // Actualizar movimiento de los participantes
   useFrame(() => {
     if (!isAnimating || stage === "idle") return;
 
+    // Actualizar solo un subconjunto de participantes por frame
+    const startIndex = updateInterval.current * batchSize.current;
+    const endIndex = Math.min(
+      startIndex + batchSize.current,
+      participants.length
+    );
+    const currentBatch = participants.slice(startIndex, endIndex);
+
     // Los participantes corren cuando la animación está activa
-    participants.forEach((participant) => {
+    currentBatch.forEach((participant) => {
       if (participant !== winner && participantRefs.current[participant]) {
         const ref = participantRefs.current[participant];
         if (!ref) return;
@@ -134,9 +144,14 @@ const ParticipantsAnimation = ({
         ref.position.set(...newPos);
       }
     });
+
+    // Actualizar el intervalo para el siguiente frame
+    updateInterval.current =
+      (updateInterval.current + 1) %
+      Math.ceil(participants.length / batchSize.current);
   });
 
-  return null; // Este componente no renderiza nada, solo maneja la animación
+  return null;
 };
 
 // Componente para manejar la animación de los participantes que no fueron seleccionados
@@ -411,6 +426,7 @@ const RaphaelAnimation = ({
   return null;
 };
 
+// Optimizar el renderizado de participantes
 const ThreeScene = ({
   winner,
   participants,
@@ -436,6 +452,61 @@ const ThreeScene = ({
   // Referencias para Raphael
   const raphaelRef = useRef<THREE.Group | null>(null);
   const swordRef = useRef<THREE.Group | null>(null);
+
+  // Generar nubes estáticas una sola vez
+  const staticClouds = useMemo(() => {
+    return Array.from({ length: isMobile.current ? 15 : 25 }).map((_, i) => {
+      const scale = 2 + Math.random() * 2;
+      const x = (Math.random() - 0.5) * 30;
+      const y = 6 + Math.random() * 4;
+      const z = (Math.random() - 0.5) * 30;
+      return (
+        <mesh
+          key={`cloud-${i}`}
+          position={[x, y, z]}
+          scale={[scale, scale * 0.4, scale]}
+          castShadow={false}
+          receiveShadow={false}
+        >
+          <sphereGeometry args={[1, 16, 16]} />
+          <meshStandardMaterial
+            color="white"
+            transparent={true}
+            opacity={0.8}
+          />
+        </mesh>
+      );
+    });
+  }, []); // Solo se genera una vez
+
+  // Generar pasto estático una sola vez
+  const staticGrass = useMemo(() => {
+    return Array.from({ length: isMobile.current ? 300 : 600 }).map((_, i) => {
+      const radius = Math.random() * 15;
+      const angle = Math.random() * Math.PI * 2;
+      const x = Math.cos(angle) * radius + (Math.random() - 0.5) * 2;
+      const z = Math.sin(angle) * radius + (Math.random() - 0.5) * 2;
+      const rotation = Math.random() * Math.PI;
+      const scale = 0.1 + Math.random() * 0.15;
+      return (
+        <mesh
+          key={`grass-${i}`}
+          position={[x, 0.1, z]}
+          rotation={[0, rotation, 0]}
+          scale={[scale, scale, scale]}
+          castShadow={false}
+          receiveShadow={false}
+        >
+          <planeGeometry args={[0.1, 0.4]} />
+          <meshStandardMaterial
+            color={Math.random() > 0.5 ? "#3a7a33" : "#4a8a43"}
+            side={THREE.DoubleSide}
+            transparent={false}
+          />
+        </mesh>
+      );
+    });
+  }, []); // Solo se genera una vez
 
   // Detectar cambios en el tamaño de la pantalla
   useEffect(() => {
@@ -514,12 +585,47 @@ const ThreeScene = ({
     return [winnerPos[0], winnerPos[1] + 1, winnerPos[2]];
   };
 
+  // Función para renderizar participantes en lotes
+  const renderParticipants = () => {
+    const batchSize = isMobile.current ? 20 : 30;
+    const batches = [];
+
+    for (let i = 0; i < participants.length; i += batchSize) {
+      const batch = participants.slice(i, i + batchSize);
+      batches.push(
+        <group key={`batch-${i}`}>
+          {batch.map((participant) => (
+            <StickFigure
+              key={participant}
+              ref={(ref) => {
+                participantRefs.current[participant] = ref;
+              }}
+              position={participantPositions[participant] || [0, 0, 0]}
+              animationStage={0}
+              isWinner={participant === winner}
+              name={participant}
+              hasSword={false}
+              isRunning={stage !== "idle" && participant !== winner}
+            />
+          ))}
+        </group>
+      );
+    }
+
+    return batches;
+  };
+
   return (
     <div className="canvas-container">
       <Canvas
-        gl={{ antialias: true }}
+        gl={{
+          antialias: true,
+          powerPreference: "high-performance",
+          precision: "lowp",
+        }}
         camera={{ position: [0, 5, 10], fov: 50 }}
         shadows
+        performance={{ min: 0.5 }}
       >
         <color attach="background" args={["#87CEEB"]} />
         <fog attach="fog" args={["#87CEEB", 15, 30]} />
@@ -537,13 +643,21 @@ const ThreeScene = ({
           shadow-camera-bottom={-10}
         />
 
-        <ResponsiveCamera />
         <OrbitControls
           enableZoom={false}
           enablePan={false}
           minPolarAngle={Math.PI / 6}
           maxPolarAngle={Math.PI / 2.5}
+          rotateSpeed={0.2}
+          enableDamping={true}
+          dampingFactor={0.05}
+          autoRotate={false}
         />
+
+        {/* Nubes estáticas */}
+        <group>{staticClouds}</group>
+
+        <ResponsiveCamera />
 
         {/* Componente de animación de participantes */}
         <ParticipantsAnimation
@@ -586,21 +700,8 @@ const ThreeScene = ({
           targetPosition={winner ? getWinnerPosition() : undefined}
         />
 
-        {/* Todos los participantes */}
-        {participants.map((participant) => (
-          <StickFigure
-            key={participant}
-            ref={(ref) => {
-              participantRefs.current[participant] = ref;
-            }}
-            position={participantPositions[participant] || [0, 0, 0]}
-            animationStage={0} // No usamos la animación interna
-            isWinner={participant === winner}
-            name={participant}
-            hasSword={false}
-            isRunning={stage !== "idle" && participant !== winner}
-          />
-        ))}
+        {/* Renderizar participantes en lotes */}
+        {renderParticipants()}
 
         {/* Sangre del corte */}
         {showBlood && <BloodSplatter position={getBloodPosition()} />}
@@ -608,15 +709,21 @@ const ThreeScene = ({
         {/* Fuegos artificiales - ahora continúan indefinidamente */}
         {showFireworks && <Fireworks />}
 
-        {/* Suelo - césped */}
-        <mesh
-          rotation={[-Math.PI / 2, 0, 0]}
-          position={[0, -0.5, 0]}
-          receiveShadow
-        >
-          <planeGeometry args={[100, 100]} />
-          <meshStandardMaterial color="#4CAF50" />
-        </mesh>
+        {/* Suelo estático optimizado */}
+        <group position={[0, -0.5, 0]}>
+          {/* Base del pasto */}
+          <mesh rotation={[-Math.PI / 2, 0, 0]} receiveShadow>
+            <planeGeometry args={[100, 100]} />
+            <meshStandardMaterial
+              color="#2d5a27"
+              metalness={0.1}
+              roughness={0.8}
+            />
+          </mesh>
+
+          {/* Detalles del pasto estáticos */}
+          <group>{staticGrass}</group>
+        </group>
 
         {/* Ambiente */}
         <Environment preset="sunset" />

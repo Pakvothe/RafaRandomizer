@@ -10,11 +10,13 @@ import {
   resetParticipantSelections,
   ParticipantList,
 } from "../firebase/services";
+import { useAnimationStore } from "../store/animationStore";
 
 const Randomizer = () => {
   // Estado para los nombres y la entrada de texto
   const [names, setNames] = useState<string[]>([]);
   const [inputValue, setInputValue] = useState("");
+  const { stopAnimation } = useAnimationStore();
 
   // Estado para el ganador y la animación
   const [winner, setWinner] = useState<string | null>(null);
@@ -208,6 +210,23 @@ const Randomizer = () => {
     setWinner(null);
     setIsAnimating(false);
     setIsSelecting(false);
+
+    // Reiniciar el estado de animación
+    stopAnimation();
+
+    // Asegurarnos de que los participantes estén disponibles para el siguiente sorteo
+    if (currentList) {
+      const eligibleParticipants = getEligibleParticipants(currentList);
+      if (eligibleParticipants.length === 0) {
+        resetParticipantSelections(currentList.id)
+          .then((resetList) => {
+            setCurrentList(resetList);
+          })
+          .catch((error) => {
+            console.error("Error resetting selections:", error);
+          });
+      }
+    }
   };
 
   // Determinar si mostrar el panel completo o solo el resultado
